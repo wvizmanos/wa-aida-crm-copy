@@ -745,6 +745,38 @@
       </div>
     </div>
 
+    <div class="sheet" id="sheet-prop" role="dialog" aria-modal="true" aria-labelledby="prop-title">
+      <div class="grab" aria-hidden="true"></div>
+      <h2 id="prop-title">New hosted proposal</h2>
+      <p class="s-sub">Client opens a branded page — you see views and accept.</p>
+      <div class="field">
+        <label for="prop-title-in">Proposal title</label>
+        <input class="input" id="prop-title-in" type="text" placeholder="Website + monthly maintenance" />
+      </div>
+      <div class="row" style="gap:10px;">
+        <div class="field" style="flex:1;">
+          <label for="prop-amount">Amount (₱)</label>
+          <input class="input" id="prop-amount" type="number" inputmode="numeric" placeholder="7990" />
+        </div>
+        <div class="field" style="flex:1;">
+          <label for="prop-validity">Valid for (days)</label>
+          <input class="input" id="prop-validity" type="number" inputmode="numeric" value="14" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="prop-services">What's included (one per line)</label>
+        <textarea class="input" id="prop-services" rows="3" placeholder="Branded proposal page&#10;2 rounds of revisions&#10;Launch within 5 days"></textarea>
+      </div>
+      <div class="field">
+        <label for="prop-msg">Personal message</label>
+        <textarea class="input" id="prop-msg" rows="2" placeholder="Glad to work with you — here's what I propose."></textarea>
+      </div>
+      <div class="row" style="margin-top:14px; gap:10px;">
+        <button class="btn-secondary" style="flex:1;" id="prop-cancel">Cancel</button>
+        <button class="btn-primary" style="flex:1.4;" id="prop-create">Create proposal</button>
+      </div>
+    </div>
+
     <div class="sheet" id="sheet-sched"/ role="dialog" aria-modal="true" aria-labelledby="sched-title">
       <div class="grab" aria-hidden="true"></div>
       <h2 id="sched-title">Schedule follow-up</h2>
@@ -845,6 +877,7 @@
   let nextId = 100;
   let state = { tab: 'leads', srcFilter: 'all', stageFilter: 'all', query: '', detailId: null, importedCount: 0, fuQuery: '', fuSort: 'order',
   links: [],
+  proposals: [],
   };
   let pipeSort = 'newest';
 
@@ -1355,6 +1388,37 @@ Tap Send on ${l.name.split(' ')[0]}'s lead page to fire it over WhatsApp.`,
     default: `Got it. I can draft follow-up messages, score your leads, or summarize the week. Try one of the quick actions below, or ask me anything about your pipeline.`,
   };
   
+
+  function loadProposals() {
+    if (!backendUrl) { state.proposals = []; return Promise.resolve(); }
+    return backendCall({ action: 'proposal_list' }).then(rows => {
+      state.proposals = Array.isArray(rows) ? rows : [];
+    }).catch(() => { state.proposals = []; });
+  }
+
+  function propStatus(p) {
+    if (p.status === 'accepted') return { label: 'Accepted', bg: '#e6f3e6', ink: '#1b5e20' };
+    if (p.status === 'opened') return { label: 'Opened', bg: '#e8f1ff', ink: '#0056c7' };
+    return { label: 'Created', bg: '#eaeef7', ink: '#16213e' };
+  }
+  function proposalsHtml(l) {
+    const ps = state.proposals.filter(x => String(x.leadId) === String(l.id));
+    if (!ps.length) return '<p class="muted" style="margin:0;font-size:13px;">No proposals yet. Create a hosted proposal — you\'ll see when the client opens and accepts it.</p>';
+    return ps.map(p => {
+      const st = propStatus(p);
+      const amt = '₱' + Number(p.amount || 0).toLocaleString('en-PH');
+      const when = p.acceptedAt ? ' · accepted ' + relTime(p.acceptedAt)
+        : (p.openedAt ? ' · opened ' + relTime(p.openedAt) : ' · created ' + relTime(p.created));
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">' +
+        '<div style="min-width:0;flex:1;">' +
+          '<div style="font-size:14px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(p.title) + '</div>' +
+          '<div class="meta" style="margin-top:2px;">' + amt + when + '</div>' +
+        '</div>' +
+        '<span class="stage-pill" style="background:' + st.bg + ';color:' + st.ink + ';">' + st.label + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
   function loadLinks() {
     if (!backendUrl) { state.links = []; return Promise.resolve(); }
     return backendCall({ action: 'links' }).then(rows => {
@@ -1419,6 +1483,10 @@ ${brief}
   function openDetail(id) {
     const l = leads.find(x => x.id === id);
     if (!l) return;
+    const prevProps = JSON.stringify(state.proposals);
+    loadProposals().then(() => {
+      if (state.detailId === id && state.tab === 'detail' && JSON.stringify(state.proposals) !== prevProps) openDetail(id);
+    }).catch(() => {});
     state.detailId = id;
     state.tab = 'detail';
     syncViews();
@@ -1479,6 +1547,13 @@ ${brief}
         <p class="meta" style="margin:0 0 12px;">TRACKED LINKS</p>
         <div class="links">${linksHtml(l)}</div>
       </div>
+      <div class="pad" style="margin-top:16px;">
+        <div class="row" style="justify-content:space-between;align-items:center;margin:0 0 10px;">
+          <p class="meta" style="margin:0;">PROPOSALS</p>
+          <button class="btn-secondary" style="padding:6px 12px;font-size:12px;flex:0;" id="btn-new-prop">+ New proposal</button>
+        </div>
+        <div class="links">${proposalsHtml(l)}</div>
+      </div>
       <div class="pad" style="margin-top:18px;">
         <p class="meta" style="margin:0 0 10px;">NOTES</p>
         <p style="margin:0;font-size:14px;line-height:1.55;">${esc(l.notes || 'No notes yet. Tap + to add context.')}</p>
@@ -1493,6 +1568,16 @@ ${brief}
     $('#detail-back').addEventListener('click', () => { state.tab = state.prevTab || 'leads'; state.detailId = null; syncViews(); });
     $('#detail-wa').addEventListener('click', () => sendWhatsApp(l));
     $('#detail-stage').addEventListener('click', () => openStageSheet(l));
+    const npBtn = $('#btn-new-prop');
+    if (npBtn) npBtn.addEventListener('click', () => {
+      if (!backendUrl) { toast('Connect your sheet to send proposals', 'error'); return; }
+      $('#prop-title-in').value = '';
+      $('#prop-amount').value = '';
+      $('#prop-services').value = '';
+      $('#prop-validity').value = '14';
+      $('#prop-msg').value = '';
+      openSheet('sheet-prop');
+    });
     const dlBtn = $('#detail-link');
     if (dlBtn) dlBtn.addEventListener('click', () => {
       if (!backendUrl) { toast('Connect your sheet to send trackable links', 'error'); return; }
@@ -1923,7 +2008,7 @@ ${brief}
     closeSheets();
     setConnFlag();
     toast('Connecting…');
-    loadFromSheet().then(() => loadLinks()).catch(() => {
+    loadFromSheet().then(() => { loadLinks(); loadProposals(); }).catch(() => {
       // URL stays saved; only explicit "Use demo data" disconnects.
       renderLeads();
       toast('Could not reach the sheet — URL kept; check it and redeploy if needed', 'error');
@@ -2015,6 +2100,31 @@ ${brief}
         x.setAttribute('aria-checked', on ? 'true' : 'false');
       });
     }));
+    $('#prop-cancel').addEventListener('click', closeSheets);
+    $('#prop-create').addEventListener('click', () => {
+      const title = $('#prop-title-in').value.trim();
+      const amount = $('#prop-amount').value.trim();
+      if (!title || !amount) { toast('Add a title and amount first', 'error'); return; }
+      const services = $('#prop-services').value.trim();
+      const validity = $('#prop-validity').value.trim() || '14';
+      const message = $('#prop-msg').value.trim();
+      const lid = state.detailId;
+      const btn = $('#prop-create');
+      btn.disabled = true; btn.textContent = 'Creating…';
+      backendCall({ action: 'proposal_create', leadId: lid, title: title, amount: amount, services: services, validity: validity, message: message })
+        .then(res => {
+          btn.disabled = false; btn.textContent = 'Create proposal';
+          if (!res || !res.id) { toast('Could not create — check your sheet connection', 'error'); return; }
+          const propUrl = new URL('proposal.html', location.href).href + '?id=' + encodeURIComponent(res.id) + '&b=' + encodeURIComponent(backendUrl);
+          $('#link-url').value = propUrl;
+          if (navigator.clipboard) navigator.clipboard.writeText(propUrl).catch(() => {});
+          closeSheets();
+          openSheet('sheet-link');
+          loadProposals().then(() => { if (state.tab === 'detail') openDetail(lid); });
+          toast('Proposal link created — send it now', 'success');
+        })
+        .catch(() => { btn.disabled = false; btn.textContent = 'Create proposal'; toast('Could not create the proposal', 'error'); });
+    });
     $('#link-cancel').addEventListener('click', closeSheets);
     $('#link-send').addEventListener('click', () => {
       const url = $('#link-url').value.trim();
@@ -2043,7 +2153,7 @@ ${brief}
         ensureAct(l0).push({ t: 'link', ts: new Date().toISOString(), label: 'Link sent via ' + channel });
         backendCall({ action: 'actlog', id: l0.id, label: 'Link sent via ' + channel }).catch(() => {});
         closeSheets();
-        loadLinks().then(() => { if (state.tab === 'detail') openDetail(l0.id); });
+        loadLinks().then(() => loadProposals()).then(() => { if (state.tab === 'detail') openDetail(l0.id); });
         toast('Link sent via ' + channel + ' — tracking enabled', 'success');
       }).catch(() => toast('Could not create the link — check your sheet connection', 'error'));
     });
