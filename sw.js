@@ -1,8 +1,9 @@
 /* WA AIDA CRM — service worker (offline app shell, update-friendly) */
-const CACHE = 'wa-aida-crm-v14';
+const CACHE = 'wa-aida-crm-v17';
 const ASSETS = [
   './',
   './index.html',
+  './proposal.html',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png'
