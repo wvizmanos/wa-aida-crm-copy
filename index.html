@@ -730,6 +730,7 @@
         <label for="link-url">Landing page or proposal URL</label>
         <input class="input" id="link-url" type="url" placeholder="https://docs.google.com/…" aria-describedby="link-hint" />
         <span class="hint" id="link-hint">The recipient lands on a WA AIDA tracking page that embeds your link, then opens it. Clicks and reading time appear under the lead.</span>
+        <button class="btn-secondary" id="link-copy" type="button" style="margin-top:8px;font-size:13px;padding:8px 14px;">Copy link</button>
       </div>
       <div class="field">
         <label id="link-ch-label">Send via</label>
@@ -946,6 +947,23 @@
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const digits = phone => String(phone || '').replace(/\D/g, '').replace(/^0/, '63');
   const waLink = (phone, text) => 'https://wa.me/' + digits(phone) + '?text=' + encodeURIComponent(text);
+  // Reliable external openers: Android uses intent: so the WhatsApp app
+  // (or a chooser: WhatsApp / WhatsApp Business) really opens — window.open
+  // can be silently blocked and wa.me can fall back to web.whatsapp.com.
+  const IS_ANDROID = /android/i.test(navigator.userAgent);
+  function waOpen(phone, text) {
+    const d = digits(phone);
+    const wa = 'https://wa.me/' + d + '?text=' + encodeURIComponent(text);
+    if (IS_ANDROID) {
+      const intent = 'intent://send?phone=' + d + '&text=' + encodeURIComponent(text) + '#Intent;scheme=whatsapp;S.browser_fallback_url=' + encodeURIComponent(wa) + ';end';
+      try { location.href = intent; return; } catch (e) { /* fall through to window.open */ }
+    }
+    window.open(wa, '_blank', 'noopener');
+  }
+  function viberOpen(phone) {
+    const u = 'viber://chat?number=%2B' + digits(phone);
+    try { location.href = u; } catch (e) { window.open(u, '_blank', 'noopener'); }
+  }
 
   let toastTimer = null;
   function toast(msg, cls) {
@@ -1160,7 +1178,7 @@
       const target = leads.find(l => l.id === fuLeadId) || leads[0];
       if (!target) { toast('Add a lead first — nothing to message yet', 'error'); return; }
       const msg = t.body.replace('{name}', target.name.split(' ')[0]).replace('{product}', target.product);
-      window.open(waLink(target.phone, msg), '_blank', 'noopener');
+      waOpen(target.phone, msg);
       toast('Opening WhatsApp for ' + target.name.split(' ')[0] + '…');
       bumpTplUse(t.id);
       const u = tl.querySelector('[data-uses="' + t.id + '"]');
@@ -1600,7 +1618,7 @@ ${brief}
 
   function sendWhatsApp(l) {
     const msg = `Hi ${l.name.split(' ')[0]}! Thanks for your interest in ${l.product}. Can I send you more details today?`;
-    window.open(waLink(l.phone, msg), '_blank', 'noopener');
+    waOpen(l.phone, msg);
     toast('Opening WhatsApp for ' + l.name.split(' ')[0] + '…');
   }
 
@@ -1615,6 +1633,8 @@ ${brief}
     $('#add-form').reset();
     document.querySelectorAll('#add-form .field').forEach(f => f.classList.remove('invalid'));
     $('#add-form-error').classList.remove('show');
+    $('#link-title').textContent = 'Send link';
+    $('#link-info').textContent = 'Track when it is opened.';
   }
   $('#scrim').addEventListener('click', closeSheets);
   $('#add-cancel').addEventListener('click', closeSheets);
@@ -2117,6 +2137,12 @@ ${brief}
           if (!res || !res.id) { toast('Could not create — check your sheet connection', 'error'); return; }
           const propUrl = new URL('proposal.html', location.href).href + '?id=' + encodeURIComponent(res.id) + '&b=' + encodeURIComponent(backendUrl);
           $('#link-url').value = propUrl;
+          $('#link-title').textContent = 'Send proposal link';
+          $('#link-info').textContent = 'Your proposal link is ready below — copy it or send it now.';
+          const urlIn = $('#link-url');
+          urlIn.style.transition = 'box-shadow .3s';
+          urlIn.style.boxShadow = '0 0 0 3px rgba(37,211,102,.5)';
+          setTimeout(() => { urlIn.style.boxShadow = ''; }, 2000);
           if (navigator.clipboard) navigator.clipboard.writeText(propUrl).catch(() => {});
           closeSheets();
           openSheet('sheet-link');
@@ -2125,23 +2151,33 @@ ${brief}
         })
         .catch(() => { btn.disabled = false; btn.textContent = 'Create proposal'; toast('Could not create the proposal', 'error'); });
     });
+    $('#link-copy').addEventListener('click', () => {
+      const v = $('#link-url').value.trim();
+      if (!v) { toast('Nothing to copy yet', 'error'); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(() => toast('Link copied', 'success')).catch(() => toast('Link copied', 'success'));
+      else toast('Link copied', 'success');
+    });
     $('#link-cancel').addEventListener('click', closeSheets);
     $('#link-send').addEventListener('click', () => {
       const url = $('#link-url').value.trim();
       if (!/^https?:\/\//i.test(url)) { toast('Enter a valid link starting with https://'); return; }
       const l0 = leads.find(x => x.id === state.detailId);
       if (!l0 || !backendUrl) return;
+      const lsBtn = $('#link-send');
+      if (lsBtn.dataset.busy === '1') return; // ignore rapid double-presses
+      lsBtn.dataset.busy = '1';
+      lsBtn.disabled = true;
       localStorage.setItem('waaida-proposal-url', url);
       const channel = linkChannel;
       backendCall({ action: 'link', leadId: l0.id, url, channel }).then(res => {
-        if (!res || !res.id) { toast('Could not create the link — check your sheet connection', 'error'); return; }
+        if (!res || !res.id) { $('#link-send').dataset.busy = ''; $('#link-send').disabled = false; toast('Could not create the link — check your sheet connection', 'error'); return; }
         const tUrl = (location.origin && /^https?:/.test(location.origin))
           ? new URL('track.html', location.href).href + '?id=' + encodeURIComponent(res.id) + '&url=' + encodeURIComponent(url) + '&b=' + encodeURIComponent(backendUrl)
           : res.trackUrl;
         const msg = 'Here is your proposal: ' + tUrl;
-        if (channel === 'whatsapp') window.open('https://wa.me/' + digits(l0.phone) + '?text=' + encodeURIComponent(msg), '_blank', 'noopener');
+        if (channel === 'whatsapp') waOpen(l0.phone, msg);
         else if (channel === 'viber') {
-          window.open('viber://chat?number=%2B' + digits(l0.phone), '_blank', 'noopener');
+          viberOpen(l0.phone);
           if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(msg);
           toast('Viber opened — link copied, paste it to send', 'success');
         }
@@ -2152,6 +2188,8 @@ ${brief}
         }
         ensureAct(l0).push({ t: 'link', ts: new Date().toISOString(), label: 'Link sent via ' + channel });
         backendCall({ action: 'actlog', id: l0.id, label: 'Link sent via ' + channel }).catch(() => {});
+        $('#link-send').dataset.busy = '';
+        $('#link-send').disabled = false;
         closeSheets();
         loadLinks().then(() => loadProposals()).then(() => { if (state.tab === 'detail') openDetail(l0.id); });
         toast('Link sent via ' + channel + ' — tracking enabled', 'success');
