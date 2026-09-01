@@ -1141,6 +1141,7 @@
 
   /* ═══════════ RENDER: FOLLOW-UP ═══════════ */
   function renderFollowup() {
+    migrateSchedules();
     const sc = $('#scheduled-card');
     if (SCHEDULED.length === 0) {
       sc.innerHTML = `<div class="muted" style="font-size:13px;">Nothing scheduled. Pick a template and press <strong>Schedule</strong>.</div>`;
@@ -1245,12 +1246,40 @@
         const row = e.target.closest('[data-sched-i]');
         if (!row) return;
         const idx = Number(row.dataset.schedI);
-        SCHEDULED.splice(idx, 1);
+        const removed = SCHEDULED.splice(idx, 1)[0];
         localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED));
+        if (removed && removed.id) backendCall({ action: 'fu_del', id: removed.id }).catch(() => {});
         renderFollowup();
         toast('Removed scheduled follow-up', 'success');
       });
     }
+    // Follow-up tab badge: count items due within 24h (or overdue up to 7d)
+    const fuTabBtn = document.querySelector('.tab[data-tab="followup"]');
+    if (fuTabBtn) {
+      const now = Date.now();
+      const due = SCHEDULED.filter(x => x.ts && x.ts - now <= 24 * 3600 * 1000 && now - x.ts <= 7 * 24 * 3600 * 1000).length;
+      let b = fuTabBtn.querySelector('.fu-badge');
+      if (due > 0) {
+        if (!b) { b = document.createElement('span'); b.className = 'fu-badge'; fuTabBtn.style.position = 'relative'; fuTabBtn.appendChild(b); }
+        b.textContent = String(due);
+        b.style.cssText = 'position:absolute;top:4px;left:50%;margin-left:2px;min-width:15px;height:15px;line-height:15px;border-radius:8px;background:#c75b39;color:#fff;font-size:10px;font-weight:700;text-align:center;padding:0 4px;';
+      } else if (b) b.remove();
+    }
+  }
+
+  // One-time sync: push old localStorage-only schedules to the sheet (V19)
+  function migrateSchedules() {
+    let dirty = false;
+    SCHEDULED.forEach(x => {
+      if (!x.id) { x.id = 'F' + Date.now() + Math.floor(Math.random() * 999); dirty = true; }
+      if (x.synced) return;
+      const lead = leads.find(l => (l.name.split(' ')[0] || '') === x.name) || leads.find(l => (l.name || '').indexOf(x.name) === 0);
+      backendCall({ action: 'fu_save', id: x.id, leadId: lead ? lead.id : '', name: lead ? lead.name : x.name, phone: (lead && lead.phone) || x.phone || '', what: x.what || '', when: x.ts || 0 })
+        .then(() => { x.synced = '1'; localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED)); })
+        .catch(() => {});
+      dirty = true;
+    });
+    if (dirty) localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED));
   }
 
   /* ═══════════ RENDER: ANALYTICS ═══════════ */
@@ -2202,12 +2231,15 @@ ${brief}
     if (!pendingSched) { closeSheets(); return; }
     const { t, target } = pendingSched;
     const ts = new Date(dt).getTime();
-    SCHEDULED.push({ name: target.name.split(' ')[0], what: t.name, when: fmtWhen(ts), ts: ts });
+    const fId = 'F' + Date.now();
+    SCHEDULED.push({ id: fId, name: target.name.split(' ')[0], what: t.name, when: fmtWhen(ts), ts: ts, phone: target.phone || '' });
     localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED));
+    // sync to sheet so reminders work even without this device (best-effort)
+    backendCall({ action: 'fu_save', id: fId, leadId: target.id, name: target.name, phone: target.phone || '', what: t.name, when: ts }).catch(() => {});
     pendingSched = null;
     closeSheets();
     renderFollowup();
-    toast('Scheduled ' + t.name + ' for ' + fmtWhen(ts), 'success');
+    toast('Scheduled ' + t.name + ' for ' + fmtWhen(ts) + ' — reminder on', 'success');
   });
 
   /* ═══════════ INIT ═══════════ */
