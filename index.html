@@ -1273,11 +1273,10 @@
     SCHEDULED.forEach(x => {
       if (!x.id) { x.id = 'F' + Date.now() + Math.floor(Math.random() * 999); dirty = true; }
       if (x.synced) return;
+      x.synced = '1'; dirty = true;
       const lead = leads.find(l => (l.name.split(' ')[0] || '') === x.name) || leads.find(l => (l.name || '').indexOf(x.name) === 0);
       backendCall({ action: 'fu_save', id: x.id, leadId: lead ? lead.id : '', name: lead ? lead.name : x.name, phone: (lead && lead.phone) || x.phone || '', what: x.what || '', when: x.ts || 0 })
-        .then(() => { x.synced = '1'; localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED)); })
-        .catch(() => {});
-      dirty = true;
+        .catch(() => { x.synced = ''; localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED)); });
     });
     if (dirty) localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED));
   }
@@ -2232,10 +2231,11 @@ ${brief}
     const { t, target } = pendingSched;
     const ts = new Date(dt).getTime();
     const fId = 'F' + Date.now();
-    SCHEDULED.push({ id: fId, name: target.name.split(' ')[0], what: t.name, when: fmtWhen(ts), ts: ts, phone: target.phone || '' });
+    SCHEDULED.push({ id: fId, name: target.name.split(' ')[0], what: t.name, when: fmtWhen(ts), ts: ts, phone: target.phone || '', synced: '1' });
     localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED));
     // sync to sheet so reminders work even without this device (best-effort)
-    backendCall({ action: 'fu_save', id: fId, leadId: target.id, name: target.name, phone: target.phone || '', what: t.name, when: ts }).catch(() => {});
+    backendCall({ action: 'fu_save', id: fId, leadId: target.id, name: target.name, phone: target.phone || '', what: t.name, when: ts })
+      .catch(() => { const it = SCHEDULED.find(y => y.id === fId); if (it) { it.synced = ''; localStorage.setItem('waaida-scheduled', JSON.stringify(SCHEDULED)); } });
     pendingSched = null;
     closeSheets();
     renderFollowup();
