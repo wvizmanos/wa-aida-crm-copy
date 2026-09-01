@@ -1,5 +1,5 @@
 /* WA AIDA CRM — service worker (offline app shell, update-friendly) */
-const CACHE = 'wa-aida-crm-v17';
+const CACHE = 'wa-aida-crm-v19';
 const ASSETS = [
   './',
   './index.html',
