@@ -685,6 +685,11 @@
             </div>
           </div>
           <div class="field">
+            <label for="in-value">Deal value (₱) <span style="color:var(--muted);font-weight:400;">· optional</span></label>
+            <input class="input" id="in-value" name="value" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 2990" />
+            <span class="hint">Potential deal amount — you can change it later from the lead's page.</span>
+          </div>
+          <div class="field">
             <label for="in-notes">Notes</label>
             <textarea class="textarea" id="in-notes" name="notes" placeholder="Anything worth remembering…"></textarea>
           </div>
@@ -699,6 +704,21 @@
       <h2 id="import-title">Import leads</h2>
       <p class="s-sub">Bring leads from a spreadsheet in one go.</p>
       <div id="import-body"></div>
+    </div>
+
+    <div class="sheet" id="sheet-value" role="dialog" aria-modal="true" aria-labelledby="value-title">
+      <div class="grab" aria-hidden="true"></div>
+      <h2 id="value-title">Deal value</h2>
+      <p class="s-sub" id="value-sub">Set the potential or agreed amount.</p>
+      <div class="field">
+        <label for="in-value2">Amount (₱)</label>
+        <input class="input" id="in-value2" type="number" inputmode="numeric" min="0" step="100" placeholder="e.g. 2990" />
+        <span class="hint">Shows on the pipeline board and in your totals.</span>
+      </div>
+      <div class="row" style="margin-top:14px; gap:10px;">
+        <button class="btn-secondary" style="flex:1;" id="value-cancel">Cancel</button>
+        <button class="btn-primary" style="flex:1.4;" id="value-save">Save</button>
+      </div>
     </div>
 
     <div class="sheet" id="sheet-stage" role="dialog" aria-modal="true" aria-labelledby="stage-title">
@@ -909,11 +929,18 @@
     return n + (backendUrl ? 0 : (SEED_USES[id] || 0));
   };
   const bumpTplUse = id => {
-    try {
-      const m = JSON.parse(localStorage.getItem('waaida-tpl-uses') || '{}');
-      m[id] = (m[id] || 0) + 1;
-      localStorage.setItem('waaida-tpl-uses', JSON.stringify(m));
-    } catch (e) {}
+    let m = {};
+    try { m = JSON.parse(localStorage.getItem('waaida-tpl-uses') || '{}') || {}; } catch (e) {}
+    m[id] = (m[id] || 0) + 1;
+    try { localStorage.setItem('waaida-tpl-uses', JSON.stringify(m)); } catch (e) {}
+    backendCall({ action: 'tpl_use', id, base: m[id] }).then(res => {
+      if (res && res.uses != null && res.uses !== m[id]) {
+        m[id] = res.uses;
+        try { localStorage.setItem('waaida-tpl-uses', JSON.stringify(m)); } catch (e) {}
+        const u = document.querySelector('[data-uses="' + id + '"]');
+        if (u) u.textContent = 'used ' + res.uses + '×';
+      }
+    }).catch(() => {});
   };
   let SCHEDULED = [];
   try { SCHEDULED = JSON.parse(localStorage.getItem('waaida-scheduled') || '[]'); } catch (e) {}
@@ -952,14 +979,21 @@
       if (!Array.isArray(rows)) return;
       let tomb = []; try { tomb = JSON.parse(localStorage.getItem('waaida-tpl-tomb') || '[]'); } catch (e) {}
       let dirty = false;
+      let uses = {};
+      try { uses = JSON.parse(localStorage.getItem('waaida-tpl-uses') || '{}') || {}; } catch (e) {}
       rows.forEach(r => {
         if (!r || !r.id || tomb.indexOf(String(r.id)) >= 0) return;
+        if (Number(r.uses) || 0) {
+          const ru = Number(r.uses);
+          if (ru > (uses[r.id] || 0)) { uses[r.id] = ru; dirty = true; }
+        }
         const cur = TPL_EDITS[r.id];
         if (!cur || (Number(new Date(r.updated).getTime()) || 0) > (Number(cur.at) || 0)) {
           TPL_EDITS[r.id] = { name: r.name, body: r.body, at: Number(new Date(r.updated).getTime()) || Date.now(), synced: '1' };
           dirty = true;
         }
       });
+      if (Object.keys(uses).length) localStorage.setItem('waaida-tpl-uses', JSON.stringify(uses));
       if (dirty) { saveTplEdits(); renderFollowup(); }
     }).catch(() => {});
   }
@@ -1626,8 +1660,8 @@ ${brief}
           <div class="card flat" style="padding:10px 0;border:1px solid var(--border);border-radius:12px;padding:10px 12px;">
             <div class="meta">INTEREST</div><div style="font-size:13px;font-weight:700;margin-top:2px;">${esc(l.product)}</div>
           </div>
-          <div class="card flat" style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;">
-            <div class="meta">POTENTIAL VALUE</div><div class="num" style="font-size:15px;font-weight:700;margin-top:2px;">${PESO(l.value)}</div>
+          <div class="card flat" id="detail-value" role="button" tabindex="0" title="Tap to set deal value" style="padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer;">
+            <div class="meta">POTENTIAL VALUE ✎</div><div class="num" style="font-size:15px;font-weight:700;margin-top:2px;">${PESO(l.value)}</div>
           </div>
         </div>
         <div class="row" style="margin-top:14px;gap:8px;">
@@ -1746,6 +1780,29 @@ ${brief}
     });
     openSheet('sheet-stage');
   }
+  let valueLeadId = null;
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#detail-value')) return;
+    const l = leads.find(x => x.id === state.detailId);
+    if (!l) return;
+    valueLeadId = l.id;
+    $('#in-value2').value = l.value ? String(l.value) : '';
+    $('#value-sub').textContent = 'Set the potential or agreed amount for ' + (l.name.split(' ')[0] || l.name) + '.';
+    openSheet('sheet-value');
+  });
+  $('#value-cancel').addEventListener('click', closeSheets);
+  $('#value-save').addEventListener('click', () => {
+    const l = leads.find(x => x.id === valueLeadId);
+    if (!l) { closeSheets(); return; }
+    const v = Number(String($('#in-value2').value).replace(/[^0-9]/g, '')) || 0;
+    l.value = v;
+    ensureAct(l).push({ t: 'stage', ts: new Date().toISOString(), label: 'Deal value set to ₱' + v.toLocaleString('en-PH') });
+    closeSheets();
+    renderPipeline();
+    if (state.tab === 'detail') openDetail(l.id);
+    if (backendUrl) backendCall({ action: 'value', id: l.id, value: v }).catch(() => toast('Value saved locally — sheet unreachable', 'error'));
+    toast(v ? 'Deal value: ₱' + v.toLocaleString('en-PH') : 'Deal value cleared', 'success');
+  });
   $('#note-save').addEventListener('click', () => {
     const txt = $('#note-text').value.trim();
     if (!txt) { toast('Write something first'); return; }
@@ -1809,7 +1866,7 @@ ${brief}
         source: $('#in-source').value,
         product: $('#in-product').value,
         stage: 'new',
-        value: 0,
+        value: Number($('#in-value').value) || 0,
         intent: 50,
         time: 'now',
         notes: $('#in-notes').value.trim() || 'Captured manually.',
