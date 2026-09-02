@@ -2034,7 +2034,10 @@ ${brief}
   // WA_AIDA_TOKEN — so a cleared browser still connects. Settings can
   // override it (e.g. after you rotate the token in the backend).
   const DEFAULT_TOKEN = 'CMvsPtq2ob3TLrGCfozWRLzepjNilV1M';
-  let backendUrl = localStorage.getItem('waaida-script-url') || (localStorage.getItem('waaida-force-demo') === '1' ? '' : DEFAULT_URL);
+  // ?demo=1 (URL) or the Settings "Use demo data" flag forces sample-data
+  // mode — used by the public demo link so visitors never touch real leads.
+  const FORCE_DEMO = /(?:^|[?&])demo=1(?:&|$)/.test(location.search) || localStorage.getItem('waaida-force-demo') === '1';
+  let backendUrl = FORCE_DEMO ? '' : (localStorage.getItem('waaida-script-url') || DEFAULT_URL);
   let loadingSheet = false;
 
   function setConnFlag() {
