@@ -2110,7 +2110,7 @@ ${brief}
         created: r.created || '',
         activity: parseAct(r.activity),
       }));
-      nextId = leads.reduce((a, l) => Math.max(a, l.id + 1), 100);
+      nextId = leads.reduce((a, l) => Math.max(a, l.id + 1), 1);
       loadingSheet = false;
       renderLeads(); renderPipeline(); renderFollowup();
       if (!silent) toast('Loaded ' + leads.length + ' leads from your sheet', 'success');
@@ -2123,7 +2123,15 @@ ${brief}
   }
 
   function persistAdd(l) {
-    return backendCall({ action: 'add', name: l.name, phone: l.phone, source: l.source, product: l.product, value: l.value || 0, intent: l.intent || 50, notes: l.notes || '' });
+    return backendCall({ action: 'add', name: l.name, phone: l.phone, source: l.source, product: l.product, value: l.value || 0, intent: l.intent || 50, notes: l.notes || '' }).then(res => {
+      // the backend owns ids — adopt it immediately so any link/proposal
+      // created right after attaches to the real lead, not a temp id
+      if (res && res.id) {
+        l.id = Number(res.id) || l.id;
+        nextId = Math.max(nextId, l.id + 1);
+      }
+      return res;
+    });
   }
 
   /* settings */
