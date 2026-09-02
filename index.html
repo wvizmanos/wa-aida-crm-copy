@@ -792,6 +792,25 @@
       </div>
     </div>
 
+    <div class="sheet" id="sheet-tpl" role="dialog" aria-modal="true" aria-labelledby="tpl-edit-title">
+      <div class="grab" aria-hidden="true"></div>
+      <h2 id="tpl-edit-title">Edit template</h2>
+      <p class="s-sub">Placeholders: {name} = their first name, {product} = what they asked about.</p>
+      <div class="field">
+        <label for="tpl-name">Template name</label>
+        <input class="input" id="tpl-name" type="text" maxlength="40" />
+      </div>
+      <div class="field">
+        <label for="tpl-body">Message</label>
+        <textarea class="input" id="tpl-body" rows="4" style="resize:vertical;min-height:96px;"></textarea>
+        <span class="hint">Used by Send on WhatsApp, Copy and Schedule. Reset restores the original.</span>
+      </div>
+      <div class="row" style="margin-top:14px; gap:10px;">
+        <button class="btn-secondary" style="flex:1;" id="tpl-reset">Reset</button>
+        <button class="btn-primary" style="flex:1.4;" id="tpl-save">Save</button>
+      </div>
+    </div>
+
     <div class="sheet" id="sheet-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <div class="grab" aria-hidden="true"></div>
       <h2 id="settings-title">Connect your data</h2>
@@ -899,6 +918,7 @@
   let SCHEDULED = [];
   try { SCHEDULED = JSON.parse(localStorage.getItem('waaida-scheduled') || '[]'); } catch (e) {}
   let pendingSched = null;
+  let editingTpl = null;
   let linkChannel = 'whatsapp';
   const fmtWhen = ts => {
     const d = new Date(ts); const now = new Date();
@@ -919,6 +939,30 @@
     { id: 't3', name: 'Price list',   uses: 27, body: 'Hi {name}! Here is the price list you asked for. Happy to walk you through it on a call.' },
     { id: 't4', name: 'Warm follow-up', uses: 18, body: 'Hi {name}! Just checking in — did you get a chance to review the quote for {product}?' },
   ];
+
+  // Editable templates (V19.2): defaults live in code, user edits layer on top.
+  // Edits persist locally AND in a Templates tab on the sheet (survives cache clears).
+  let TPL_EDITS = {};
+  try { TPL_EDITS = JSON.parse(localStorage.getItem('waaida-tpl-edit') || '{}'); } catch (e) {}
+  const saveTplEdits = () => localStorage.setItem('waaida-tpl-edit', JSON.stringify(TPL_EDITS));
+  const tplAll = () => TEMPLATES.map(t => TPL_EDITS[t.id] ? { ...t, name: TPL_EDITS[t.id].name, body: TPL_EDITS[t.id].body, edited: 1 } : t);
+  const tplFind = id => tplAll().find(t => t.id === id) || TEMPLATES[0];
+  function tplSyncRemote() {
+    backendCall({ action: 'tpl_list' }).then(rows => {
+      if (!Array.isArray(rows)) return;
+      let tomb = []; try { tomb = JSON.parse(localStorage.getItem('waaida-tpl-tomb') || '[]'); } catch (e) {}
+      let dirty = false;
+      rows.forEach(r => {
+        if (!r || !r.id || tomb.indexOf(String(r.id)) >= 0) return;
+        const cur = TPL_EDITS[r.id];
+        if (!cur || (Number(new Date(r.updated).getTime()) || 0) > (Number(cur.at) || 0)) {
+          TPL_EDITS[r.id] = { name: r.name, body: r.body, at: Number(new Date(r.updated).getTime()) || Date.now(), synced: '1' };
+          dirty = true;
+        }
+      });
+      if (dirty) { saveTplEdits(); renderFollowup(); }
+    }).catch(() => {});
+  }
 
   const KPI = {
     '7d':  { leads: '14',  leadsD: '+6 vs prev', conv: '16%', convD: '+1 pt', resp: '1.6h', respD: '−0.3h', value: '₱640K', valueD: '+9%' },
@@ -1206,12 +1250,13 @@
       card.setAttribute('tabindex', '0');
       card.setAttribute('aria-label', 'Use template ' + t.name);
       card.innerHTML = `
-        <div class="t-name">${esc(t.name)}<span class="meta" data-uses="${t.id}">used ${tplUses(t.id)}×</span></div>
+        <div class="t-name">${esc(t.name)}<span class="meta" data-uses="${t.id}">used ${tplUses(t.id)}×${t.edited ? ' · edited' : ''}</span></div>
         <div class="t-body">"${esc(t.body)}"</div>
         <div class="t-acts">
           <button class="mini-btn wa" data-tpl-send="${t.id}">${waIcon().replace('<svg', '<svg style="width:15px;height:15px;"')} Send on WhatsApp</button>
           <button class="mini-btn" data-tpl-copy="${t.id}"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg> Copy</button>
           <button class="mini-btn" data-tpl-sched="${t.id}"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg> Schedule</button>
+          <button class="mini-btn" data-tpl-edit="${t.id}"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Edit</button>
         </div>`;
       card.addEventListener('click', () => sendTemplate(t));
       card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sendTemplate(t); } });
@@ -1219,18 +1264,18 @@
     });
     tl.querySelectorAll('[data-tpl-send]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
-      const t = TEMPLATES.find(x => x.id === b.dataset.tplSend);
+      const t = tplAll().find(x => x.id === b.dataset.tplSend);
       if (t) sendTemplate(t);
     }));
     tl.querySelectorAll('[data-tpl-copy]').forEach(b => b.addEventListener('click', () => {
-      const t = TEMPLATES.find(x => x.id === b.dataset.tplCopy);
+      const t = tplAll().find(x => x.id === b.dataset.tplCopy);
       const msg = t.body.replace('{name}', '[first name]').replace('{product}', '[product]');
       if (navigator.clipboard) { navigator.clipboard.writeText(msg).then(() => toast('Template copied', 'success')); }
       else toast('Template copied', 'success');
     }));
     tl.querySelectorAll('[data-tpl-sched]').forEach(b => b.addEventListener('click', (e) => {
       e.stopPropagation();
-      const t = TEMPLATES.find(x => x.id === b.dataset.tplSched);
+      const t = tplAll().find(x => x.id === b.dataset.tplSched);
       const target = leads.find(l => l.id === fuLeadId) || leads[0];
       if (!target) { toast('Add a lead first — nothing to schedule', 'error'); return; }
       pendingSched = { t, target };
@@ -1238,6 +1283,16 @@
       const dflt = new Date(Date.now() + 60 * 60000);
       $('#sched-dt').value = toLocalInput(dflt);
       openSheet('sheet-sched');
+    }));
+    tl.querySelectorAll('[data-tpl-edit]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const t = tplAll().find(x => x.id === b.dataset.tplEdit);
+      if (!t) return;
+      editingTpl = t.id;
+      $('#tpl-name').value = t.name;
+      $('#tpl-body').value = t.body;
+      $('#tpl-reset').style.display = TPL_EDITS[t.id] ? '' : 'none';
+      openSheet('sheet-tpl');
     }));
     // tap a scheduled row to remove it (bind once)
     if (sc && !sc.dataset.boundSched) {
@@ -2224,6 +2279,33 @@ ${brief}
       }).catch(() => toast('Could not create the link — check your sheet connection', 'error'));
     });
     $('#sched-cancel').addEventListener('click', closeSheets);
+  $('#tpl-save').addEventListener('click', () => {
+    if (!editingTpl) return;
+    const name = $('#tpl-name').value.trim();
+    const body = $('#tpl-body').value.trim();
+    if (!name || !body) { toast('Give it a name and a message', 'error'); return; }
+    TPL_EDITS[editingTpl] = { name, body, at: Date.now(), synced: '1' };
+    saveTplEdits();
+    backendCall({ action: 'tpl_save', id: editingTpl, name, body })
+      .catch(() => { if (TPL_EDITS[editingTpl]) { TPL_EDITS[editingTpl].synced = ''; saveTplEdits(); } });
+    editingTpl = null;
+    closeSheets();
+    renderFollowup();
+    toast('Template saved', 'success');
+  });
+  $('#tpl-reset').addEventListener('click', () => {
+    if (!editingTpl) return;
+    const id = editingTpl;
+    delete TPL_EDITS[id];
+    let tomb = []; try { tomb = JSON.parse(localStorage.getItem('waaida-tpl-tomb') || '[]'); } catch (e) {}
+    if (tomb.indexOf(id) < 0) { tomb.push(id); localStorage.setItem('waaida-tpl-tomb', JSON.stringify(tomb)); }
+    saveTplEdits();
+    backendCall({ action: 'tpl_del', id }).catch(() => {});
+    editingTpl = null;
+    closeSheets();
+    renderFollowup();
+    toast('Template reset to default', 'success');
+  });
   $('#sched-confirm').addEventListener('click', () => {
     const dt = $('#sched-dt').value;
     if (!dt) { toast('Pick a date and time first'); return; }
@@ -2243,6 +2325,7 @@ ${brief}
   });
 
   /* ═══════════ INIT ═══════════ */
+  tplSyncRemote();
   const tl = $('#today-label');
   if (tl) tl.textContent = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase();
   setConnFlag();
